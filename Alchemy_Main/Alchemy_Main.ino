@@ -7,6 +7,7 @@
 #include <ArduinoRS485.h> 
 #include <ArduinoModbus.h>
 #include <P1AM.h>
+#include <Functions.h>
 
 // MAC Address for P1AM-200 PLC
 byte mac[] = { 0x60, 0x52, 0xD0, 0x07, 0xF5, 0x67};
@@ -26,7 +27,6 @@ int client_cnt;
  
 void setup() {
   Serial.begin(115200);
-  //while (!Serial){}// wait for serial port to connect.
   Serial.println("Modbus TCP Server and Module I/O Example");
   while (!P1.init()){} ; //Wait for P1 Modules to Sign on   
   Ethernet.begin(mac, ip);
@@ -38,9 +38,9 @@ void setup() {
   }
  
   modbusTCPServer.configureCoils(0x00, 16);             //Coils
-  modbusTCPServer.configureDiscreteInputs(0x00, 32);    //Discrete Inputs
-  modbusTCPServer.configureHoldingRegisters(0x00, 16); //Holding Register Words
-  modbusTCPServer.configureInputRegisters(0x00, 16);   //Input Register Words
+  // modbusTCPServer.configureDiscreteInputs(0x00, 32);    //Discrete Inputs
+  // modbusTCPServer.configureHoldingRegisters(0x00, 16); //Holding Register Words
+  // modbusTCPServer.configureInputRegisters(0x00, 16);   //Input Register Words
  
   Serial.println("Done with setup()");
 }
