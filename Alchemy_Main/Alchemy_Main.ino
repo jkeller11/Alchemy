@@ -1,7 +1,5 @@
 //Created by James D Keller 7/16/2024
 //Intended for Project Alchemy beta test machine for the LSHS office
-//**TO DO** Project Description 
-
 #include <SPI.h>
 #include <Ethernet.h>
 #include <ArduinoRS485.h> 
@@ -14,13 +12,16 @@ byte mac[] = { 0x60, 0x52, 0xD0, 0x07, 0xF5, 0x67};
 // IP address for P1AM-200 PLC
 IPAddress ip(192, 168, 1, 178);
 
+//Global Variables
 boolean MB_C[16]; //Modbus Coil Bits
 boolean MB_I[32]; //Modbus Input Bits
 int MB_HR[16];    //Modbus Holding Registers
 int MB_IR[16];    //Modbus Input Registers
 int PWMpin = 2;
 int PumpDirectionPin = 3;
- 
+int pumpDirection = 0;
+
+//Global Objects
 EthernetServer server(502);
 EthernetClient clients[8];
 ModbusTCPServer modbusTCPServer;
@@ -43,14 +44,11 @@ void setup() {
   modbusTCPServer.configureHoldingRegisters(0x00, 16); //Holding Register Words
   modbusTCPServer.configureInputRegisters(0x00, 16);   //Input Register Words
  
-  
   Serial.println("Done with setup()");
   pinMode(PumpDirectionPin, OUTPUT);
 }
  
 void loop() {
-
-
   EthernetClient newClient = server.accept(); //listen for incoming clients
   if (newClient) { //process new connection if possible
   for (byte i = 0; i < 8; i++) { //Eight connections possible, find first available.
@@ -73,7 +71,8 @@ void loop() {
       modbusTCPServer.poll();// service any Modbus TCP requests, while client connected
       }
   }
-  for (byte i = 0; i < 8; i++) { // Stop any clients which are disconnected
+  // Stop any clients which are disconnected
+  for (byte i = 0; i < 8; i++) { 
     if (clients[i] && !clients[i].connected()) {
       clients[i].stop();
       client_cnt--;
@@ -81,9 +80,17 @@ void loop() {
       Serial.println(client_cnt);
     }
   }
+
+  //Read current state of the Modbus arrays
+  updateCoils();
+  updateInputs();
+  updateHoldingRegisters();
+  updateInputRegisters();
+
   //Saftey For Pump
   if((MB_C[7] == false) && (MB_HR[0] != 0)){safteyPumpSpeed();}
 
+  //Write Discrete outputs to P1-08TRS & P1-15CDD1
   for (int i=0;i<8;i++){
     P1.writeDiscrete(MB_C[i],1,i+1);//Data,Slot,Channel ... Channel is one-based.
   }
@@ -91,41 +98,53 @@ void loop() {
     P1.writeDiscrete(MB_C[i],2,i-7);//Data,Slot,Channel ... Channel is one-based.
   }
 
-  updateCoils(); //Read current state of the Modbus Coils into MB_C[]
-  updateInputs();
-  updateHoldingRegisters();
-  updateInputRegisters();
-
-  setPumpSpeed(MB_HR[0]);    //Pump Speed
+  //Pump Speed
+  setPumpSpeed(MB_HR[0]);    
   
-  setPumpDirection(MB_C[9], MB_HR[0]); //Pump Direction
-  
-  
+  //Pump Direction
+  if(pumpDirection != MB_C[9]){
+    pumpDirection = MB_C[9];
+    setPumpDirection(MB_C[9], MB_HR[0]);
+  }
 
 }
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void setPumpSpeed(int speed){
   int dutyCycle = map(speed, 0, 100, 255, 0);
 
   analogWrite(PWMpin, dutyCycle);
+  modbusTCPServer.holdingRegisterWrite(0,speed);
 }
 
 void safteyPumpSpeed(){ 
+  analogWrite(PWMpin, 0);
   modbusTCPServer.holdingRegisterWrite(0,0);
 }
 
 void setPumpDirection(int direction, int speed){
   if(speed != 0){
+    
+    int y = speed / 4;
+    for(int x = 1; x<=4; x++){
+      setPumpSpeed(speed - (y*x));
+      delay(200);
+    }
+
     setPumpSpeed(0);
-    delay(1000);
+    delay(200);
+
     digitalWrite(PumpDirectionPin,direction);
+
+    y = speed / 4;
+    for(int x = 1; x<=4; x++){
+      setPumpSpeed(y * x);
+      delay(200);
+    }
     setPumpSpeed(speed);
   }
   else{
     digitalWrite(PumpDirectionPin,direction);
   }
 }
-
 
 void updateCoils() {//Read the Coil bits from the Modbus Library
   for (int i=0;i<16;i++){
