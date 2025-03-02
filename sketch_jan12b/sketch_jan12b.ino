@@ -1,5 +1,5 @@
 #include <Wire.h>
-#include <SparkFun_I2C_Mux_Arduino_Library.h>
+//#include <SparkFun_I2C_Mux_Arduino_Library.h>
 #define SDA_PIN 2  // Define custom SDA pin
 #define SCL_PIN 3  // Define custom SCL pin
 

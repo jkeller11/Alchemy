@@ -18,7 +18,6 @@ boolean MB_C[16];  //Modbus Coil Bits
 boolean MB_I[32];  //Modbus Input Bits
 int MB_HR[16];     //Modbus Holding Registers
 int MB_IR[16];     //Modbus Input Registers
-int PWMpin = 2;
 int PumpDirectionPin = 3;
 int pumpDirection = 0;
 
@@ -29,14 +28,14 @@ ModbusTCPServer modbusTCPServer;
 int client_cnt;
 
 void setup() {
-  Serial.begin(115200);
-  Serial.println("Modbus TCP Server and Module I/O Example");
+  Serial1.begin(9600);
+  //Serial.println("Modbus TCP Server and Module I/O Example");
   while (!P1.init()) {};  //Wait for P1 Modules to Sign on
   Ethernet.begin(mac, ip);
   server.begin();  // start the server to begin listening
 
   if (!modbusTCPServer.begin()) {  // start the Modbus TCP server
-    Serial.println("Failed to start Modbus TCP Server!");
+    //Serial.println("Failed to start Modbus TCP Server!");
     while (1)
       ;  //If it can't be started no need to contine, stay here forever.
   }
@@ -46,7 +45,7 @@ void setup() {
   modbusTCPServer.configureHoldingRegisters(0x00, 16);  //Holding Register Words
   modbusTCPServer.configureInputRegisters(0x00, 16);    //Input Register Words
 
-  Serial.println("Done with setup()");
+  //Serial.println("Done with setup()");
   pinMode(PumpDirectionPin, OUTPUT);
 }
 
@@ -57,10 +56,10 @@ void loop() {
       if (!clients[i]) {
         clients[i] = newClient;
         client_cnt++;
-        Serial.print("Client Accept:");  //a new client connected
-        Serial.print(newClient.remoteIP());
-        Serial.print(" , Total:");
-        Serial.println(client_cnt);
+        //Serial.print("Client Accept:");  //a new client connected
+        //Serial.print(newClient.remoteIP());
+        //Serial.print(" , Total:");
+        //Serial.println(client_cnt);
         break;
       }
     }
@@ -78,8 +77,8 @@ void loop() {
     if (clients[i] && !clients[i].connected()) {
       clients[i].stop();
       client_cnt--;
-      Serial.print("Client Stopped, Total: ");
-      Serial.println(client_cnt);
+      //Serial.print("Client Stopped, Total: ");
+      //Serial.println(client_cnt);
     }
   }
 
@@ -113,13 +112,12 @@ void loop() {
 void setPumpSpeed(int speed) {
   int dutyCycle = map(speed, 0, 100, 255, 0);
 
-  analogWrite(PWMpin, dutyCycle);
-  Serial.println(dutyCycle);
+  Serial1.write(byte(dutyCycle));
   modbusTCPServer.holdingRegisterWrite(0, speed);
 }
 
 void safteyPumpSpeed() {
-  analogWrite(PWMpin, 0);
+  Serial1.write((byte) 0x00);
   modbusTCPServer.holdingRegisterWrite(0, 0);
 }
 
