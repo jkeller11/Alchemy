@@ -28,7 +28,6 @@ ModbusTCPServer modbusTCPServer;
 int client_cnt;
 
 void setup() {
-  Serial1.begin(9600);
   //Serial.println("Modbus TCP Server and Module I/O Example");
   while (!P1.init()) {};  //Wait for P1 Modules to Sign on
   Ethernet.begin(mac, ip);
@@ -112,12 +111,14 @@ void loop() {
 void setPumpSpeed(int speed) {
   int dutyCycle = map(speed, 0, 100, 255, 0);
 
-  Serial1.write(byte(dutyCycle));
+  //Serial1.write(byte(dutyCycle));
+  P1.writePWM(dutyCycle, 20000, 3, 1);
   modbusTCPServer.holdingRegisterWrite(0, speed);
 }
 
 void safteyPumpSpeed() {
-  Serial1.write((byte) 0x00);
+  //Serial1.write((byte) 0x00);
+  P1.writePWM(0, 20000, 3, 1);
   modbusTCPServer.holdingRegisterWrite(0, 0);
 }
 
