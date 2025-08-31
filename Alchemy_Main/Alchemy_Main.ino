@@ -1,5 +1,5 @@
 //Created by James D Keller 7/16/2024
-//Intended for Project Alchemy beta test machine for the LSHS office
+//Intended for Project Alchemy beta test machine for the LSHS
 #include <SPI.h>
 #include <Ethernet.h>
 #include <ArduinoRS485.h>
@@ -23,7 +23,7 @@ int pumpDirection = 0;
 
 //Global Objects
 EthernetServer server(502);
-EthernetClient clients[8];
+EthernetClient client;
 ModbusTCPServer modbusTCPServer;
 int client_cnt;
 
