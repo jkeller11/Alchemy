@@ -21,22 +21,18 @@ int MB_IR[16];     //Modbus Input Registers
 int PumpDirectionPin = 3;
 int pumpDirection = 0;
 
-//Global Objects
 EthernetServer server(502);
-EthernetClient client;
+EthernetClient clients[8];
 ModbusTCPServer modbusTCPServer;
-int client_cnt;
 
 void setup() {
-  //Serial.println("Modbus TCP Server and Module I/O Example");
-  while (!P1.init()) {};  //Wait for P1 Modules to Sign on
+  while (!P1.init()){} ; //Wait for P1 Modules to Sign on   
   Ethernet.begin(mac, ip);
-  server.begin();  // start the server to begin listening
+  server.begin(); // start the server to begin listening
 
-  if (!modbusTCPServer.begin()) {  // start the Modbus TCP server
-    //Serial.println("Failed to start Modbus TCP Server!");
-    while (1)
-      ;  //If it can't be started no need to contine, stay here forever.
+
+  if (!modbusTCPServer.begin()) { // start the Modbus TCP server
+    while (1);
   }
 
   modbusTCPServer.configureCoils(0x00, 32);             //Coils
@@ -44,51 +40,21 @@ void setup() {
   modbusTCPServer.configureHoldingRegisters(0x00, 16);  //Holding Register Words
   modbusTCPServer.configureInputRegisters(0x00, 16);    //Input Register Words
 
-  //Serial.println("Done with setup()");
-  pinMode(PumpDirectionPin, OUTPUT);
+  //pinMode(PumpDirectionPin, OUTPUT); //????
+
 }
 
 void loop() {
-  EthernetClient newClient = server.accept();  //listen for incoming clients
-  if (newClient) {                             //process new connection if possible
-    for (byte i = 0; i < 8; i++) {             //Eight connections possible, find first available.
-      if (!clients[i]) {
-        clients[i] = newClient;
-        client_cnt++;
-        //Serial.print("Client Accept:");  //a new client connected
-        //Serial.print(newClient.remoteIP());
-        //Serial.print(" , Total:");
-        //Serial.println(client_cnt);
-        break;
-      }
-    }
-  }
 
-  //If there are packets available, receive them and process them.
-  for (byte i = 0; i < 8; i++) {
-    if (clients[i].available()) {          //if data is available
-      modbusTCPServer.accept(clients[i]);  //accept that data
-      modbusTCPServer.poll();              // service any Modbus TCP requests, while client connected
-    }
-  }
-  // Stop any clients which are disconnected
-  for (byte i = 0; i < 8; i++) {
-    if (clients[i] && !clients[i].connected()) {
-      clients[i].stop();
-      client_cnt--;
-      //Serial.print("Client Stopped, Total: ");
-      //Serial.println(client_cnt);
-    }
-  }
+  ModBusTCPService();
 
-  //Read current state of the Modbus arrays
   updateCoils();
   updateInputs();
   updateHoldingRegisters();
   updateInputRegisters();
-
+  
   //Saftey For Pump
-  if ((MB_C[7] == false) && (MB_HR[0] != 0)) { safteyPumpSpeed(); }
+  if ((MB_C[7] == false) && (MB_HR[0] != 0)) { safteyPumpSpeed();}
 
   //Write Discrete outputs to P1-08TRS & P1-15CDD1
   for (int i = 0; i < 8; i++) {
@@ -146,6 +112,34 @@ void setPumpDirection(int direction, int speed) {
     digitalWrite(PumpDirectionPin, direction);
   }
 }
+
+////////////////////////////////////////Utility Functions/////////////////////////////////////////////////////////////////////////////////////////
+void ModBusTCPService(){
+  EthernetClient newClient = server.accept(); //listen for incoming clients
+  
+  if (newClient) { //process new connection if possible
+    for (byte i = 0; i < 8; i++) { //Eight connections possible, find first available.
+      if (!clients[i]) {
+        clients[i] = newClient;
+        break;
+      }
+    }
+  }
+
+  //If there are packets available, receive them and process them.
+  for (byte i = 0; i < 8; i++) {
+    if (clients[i].available()) { //if data is available
+      modbusTCPServer.accept(clients[i]); //accept that data
+      modbusTCPServer.poll();// service any Modbus TCP requests, while client connected
+    }
+  }
+  for (byte i = 0; i < 8; i++) { // Stop any clients which are disconnected
+    if (clients[i] && !clients[i].connected()) {
+      clients[i].stop();
+    }
+  }
+}
+
 
 void updateCoils() {  //Read the Coil bits from the Modbus Library
   for (int i = 0; i < 16; i++) {
