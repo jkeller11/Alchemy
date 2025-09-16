@@ -49,7 +49,7 @@ void loop() {
   updateHoldingRegisters();  // Updates HR Array with values from Modbus server
   updateInputRegisters();    // Updates IR Array with values from Modbus server
   
-  //Check for Service Mode
+  //Check for Clean Mode
   if(MB_C[10]){
 
   }
@@ -64,11 +64,11 @@ void loop() {
 
   }
 
-  // //Write Discrete outputs to relay card for Solenoids and Pump
-  // for (int i = 0; i <= 8; i++) {
-  //   P1.writeDiscrete(MB_C[i], 1, i + 1);  //Data,Slot,Channel ... Channel is one-based.
-  // }
-  // P1.writeDiscrete(MB_C[9], 2, 1); //Write Mixer State
+  //Write Discrete outputs to relay card for Solenoids and Pump
+  for (int i = 0; i <= 8; i++) {
+    P1.writeDiscrete(MB_C[i], 1, i + 1);  //Data,Slot,Channel ... Channel is one-based.
+  }
+  P1.writeDiscrete(MB_C[9], 2, 1); //Write Mixer State
   
   
   // P1.writeDiscrete(MB_C[10], 2, 2); //Write Pump Direction
@@ -77,20 +77,40 @@ void loop() {
   // setPumpSpeed(MB_HR[0]); //Pump Speed
 
 }
-///////////////////////////////////////Service Mode///////////////////////////////////////////////////////////////////////////////////////////////
-void ServiceMode(){
+///////////////////////////////////////Clean Mode///////////////////////////////////////////////////////////////////////////////////////////////
+void CleanMode(){
   while(1){
+    ModBusTCPService();
+    if(!MB_C[10]){
+      break;
+    }
+
+    updateCoils();             // Updates Coil Array with values from Modbus server
+    updateInputs();            // Updates Input Array with values from Modbus server
+    updateHoldingRegisters();  // Updates HR Array with values from Modbus server
+    updateInputRegisters();    // Updates IR Array with values from Modbus server
+
+
 
   }
   reset();
 }
 ///////////////////////////////////////Engineering Mode///////////////////////////////////////////////////////////////////////////////////////////
 void EngineeringMode(){//For troubleshooting purposes
+  reset();
+
   while(1){
+    ModBusTCPService();
+    if(!MB_C[11]){
+      break;
+    }
+
     updateCoils();             // Updates Coil Array with values from Modbus server
     updateInputs();            // Updates Input Array with values from Modbus server
     updateHoldingRegisters();  // Updates HR Array with values from Modbus server
     updateInputRegisters();    // Updates IR Array with values from Modbus server
+
+
 
   }
   reset();
@@ -98,6 +118,17 @@ void EngineeringMode(){//For troubleshooting purposes
 ///////////////////////////////////////Production Mode////////////////////////////////////////////////////////////////////////////////////////////
 void ProductionMode(){
   while(1){
+    ModBusTCPService();
+    if(!MB_C[12]){
+      break;
+    }
+
+    updateCoils();             // Updates Coil Array with values from Modbus server
+    updateInputs();            // Updates Input Array with values from Modbus server
+    updateHoldingRegisters();  // Updates HR Array with values from Modbus server
+    updateInputRegisters();    // Updates IR Array with values from Modbus server
+
+
 
   }
   reset();
