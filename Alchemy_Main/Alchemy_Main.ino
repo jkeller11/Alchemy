@@ -6,10 +6,11 @@
 #include <ArduinoModbus.h>
 #include <P1AM.h>
 #include "Functions.h"
+#include "Timer.h"
 
-#define relayCard = 1
-#define analogCard = 2
-#define pwmCard = 3
+#define relayCard 1
+#define comboCard 2
+#define pwmCard 3
 
 // MAC Address for P1AM-200 PLC
 byte mac[] = { 0x60, 0x52, 0xD0, 0x07, 0xF5, 0x67 };
@@ -19,7 +20,7 @@ IPAddress ip(192, 168, 1, 178);
 
 //Global Variables
 boolean MB_C[16];  //Modbus Coil Bits          R/W
-boolean MB_I[32];  //Modbus Input Bits         R       
+boolean MB_I[16];  //Modbus Input Bits         R       
 int MB_HR[16];     //Modbus Holding Registers  R
 int MB_IR[16];     //Modbus Input Registers    R/W
 int PumpDirectionPin = 3;
@@ -27,6 +28,7 @@ int PumpDirectionPin = 3;
 EthernetServer server(502);
 EthernetClient clients[8];
 ModbusTCPServer modbusTCPServer;
+Timer timer; //timer object for cleaning and inital mixing
 
 void setup() {
   while (!P1.init()){} ; //Wait for P1 Modules to Sign on   
@@ -44,39 +46,32 @@ void setup() {
 void loop() {
 
   ModBusTCPService();        // Handles TCP Modbus connection to HMI
-  updateCoils();             // Updates Coil Array with values from Modbus server
-  updateInputs();            // Updates Input Array with values from Modbus server
-  updateHoldingRegisters();  // Updates HR Array with values from Modbus server
-  updateInputRegisters();    // Updates IR Array with values from Modbus server
+  updateArrays();            // Updates Coils, Input Bits, Holding & Input Registers on PLC
+  //updatemodbusTCPServer();   // Updates modbus server values
   
-  //Check for Clean Mode
-  if(MB_C[10]){
+  // if(MB_I[0] == 0){ //check if E-Stop has been pressed
+  //   reset();
+  // }
 
-  }
+  // //Check for Clean Mode
+  // if(MB_C[10]){
+  //   CleanMode();
+  // }
   
-  //Check for Engineering Mode
-  if(MB_C[11]){
+  // //Check for Engineering Mode
+  // if(MB_C[11]){
 
-  }
+  // }
 
-  //Check for Production Mode
-  if(MB_C[12]){
+  // //Check for Production Mode
+  // if(MB_C[12]){
 
-  }
+  // }
 
-  //Write Discrete outputs to relay card for Solenoids and Pump
-  for (int i = 0; i <= 8; i++) {
-    P1.writeDiscrete(MB_C[i], 1, i + 1);  //Data,Slot,Channel ... Channel is one-based.
-  }
-  P1.writeDiscrete(MB_C[9], 2, 1); //Write Mixer State
-  
-  
-  // P1.writeDiscrete(MB_C[10], 2, 2); //Write Pump Direction
-  
-  // //Mixer and Pump Code
-  // setPumpSpeed(MB_HR[0]); //Pump Speed
-
+  updatemodbusTCPServer(); //Updates modbus server values
+  updateEquipmentStates();  //Write to PLC cards
 }
+
 ///////////////////////////////////////Clean Mode///////////////////////////////////////////////////////////////////////////////////////////////
 void CleanMode(){
   while(1){
@@ -85,12 +80,13 @@ void CleanMode(){
       break;
     }
 
-    updateCoils();             // Updates Coil Array with values from Modbus server
-    updateInputs();            // Updates Input Array with values from Modbus server
-    updateHoldingRegisters();  // Updates HR Array with values from Modbus server
-    updateInputRegisters();    // Updates IR Array with values from Modbus server
+    updatemodbusTCPServer(); //Updates Coils, Input Bits, Holding & Input Registers
 
-
+    //start timer and mix
+    //run pump for 3 minutes flush each valvue in order for 30 sec
+    //allow manual operation of flushing
+    //pop up recommend cleaing message
+    
 
   }
   reset();
@@ -105,10 +101,8 @@ void EngineeringMode(){//For troubleshooting purposes
       break;
     }
 
-    updateCoils();             // Updates Coil Array with values from Modbus server
-    updateInputs();            // Updates Input Array with values from Modbus server
-    updateHoldingRegisters();  // Updates HR Array with values from Modbus server
-    updateInputRegisters();    // Updates IR Array with values from Modbus server
+    updatemodbusTCPServer(); //Updates Coils, Input Bits, Holding & Input Registers
+
 
 
 
@@ -123,12 +117,18 @@ void ProductionMode(){
       break;
     }
 
-    updateCoils();             // Updates Coil Array with values from Modbus server
-    updateInputs();            // Updates Input Array with values from Modbus server
-    updateHoldingRegisters();  // Updates HR Array with values from Modbus server
-    updateInputRegisters();    // Updates IR Array with values from Modbus server
+    updatemodbusTCPServer(); //Updates Coils, Input Bits, Holding & Input Registers
 
-
+    //allow entry of # of bottles
+    //calc flow rate via recipe on HMI
+    //Prompt to confirm medicine added
+    //Start time and mix for X minuites... allow for canceling ealry
+    //once canceled or mixing fnished prompt to begin
+    //start cycle of dispensing group one (time via flowrate estimate)  jog to fill remainder
+    //confirm next group 2 start
+    //repeat until bottle # reached or canceled ealry
+    //Once tranitioning to complete message to go to manual mode and finish dispensing
+    
 
   }
   reset();
@@ -137,12 +137,18 @@ void ProductionMode(){
 ///////////////////////////////////////Equipment Functions////////////////////////////////////////////////////////////////////////////////////////
 void reset(){//set all Modbus data back to default
   for(int x = 0; x <16; x++){
-    modbusTCPServer.coilWrite(x,0);
+
+    if(x!=10 or x!=11 or x!=12){ //avoid overwriting phases
+      modbusTCPServer.coilWrite(x,0);
+    }
+    
     modbusTCPServer.holdingRegisterWrite(x,0);
+    modbusTCPServer.inputRegisterWrite(x, 0);
+    modbusTCPServer.discreteInputWrite(x, 0);
   }
   
   while(1){
-    updateInputs();
+    updatemodbusTCPServer();
     if(MB_I[0] == 1){ //check if E-Stop has been reset
       break; 
     }
@@ -156,15 +162,16 @@ void setPumpSpeed(int speed) {
   modbusTCPServer.holdingRegisterWrite(0, speed);
 }
 
-
-void setPumpDirection(int direction, int speed) {
-  if (speed != 0) {
-
-  }
-  else{
-
+void updateEquipmentStates(){
+  //Update Relay Card - Valves & Pump On/Off
+  for (int i = 0; i < 8; i++) {
+    P1.writeDiscrete(MB_C[i], relayCard, i + 1);  //Data,Slot,Channel ... Channel is one-based.
   }
 
+  P1.writeDiscrete(MB_C[8], comboCard, 1); //Mixer On/Off
+  P1.writeDiscrete(MB_C[9], comboCard, 2); //Pump Direction
+
+  setPumpSpeed(MB_HR[0]);
 }
 
 ////////////////////////////////////////Utility Functions/////////////////////////////////////////////////////////////////////////////////////////
@@ -194,27 +201,22 @@ void ModBusTCPService(){
   }
 }
 
-
-void updateCoils() {  //Read the Coil bits from the Modbus Library
+void updateArrays(){//Updates Coils, Input Bits, Holding & Input Registers. Reads from modbusTCPServer(HMI)
   for (int i = 0; i < 16; i++) {
     MB_C[i] = modbusTCPServer.coilRead(i);
-  }
-}
-
-void updateInputs() {  //Write the Input bits to the Modbus Library
-  for (int i = 0; i < 32; i++) {
-    modbusTCPServer.discreteInputWrite(i, MB_I[i]);
-  }
-}
-
-void updateHoldingRegisters() {  //Read the Holding Register words from the Modbus Library
-  for (int i = 0; i < 16; i++) {
     MB_HR[i] = modbusTCPServer.holdingRegisterRead(i);
+    MB_IR[i] = modbusTCPServer.inputRegisterRead(i);
+    MB_I[i] = modbusTCPServer.discreteInputRead(i);
   }
 }
 
-void updateInputRegisters() {  //Write the Input Registers to the Modbus Library
-  for (int i = 0; i < 16; i++) {
-    modbusTCPServer.inputRegisterWrite(i, MB_IR[i]);
+void updatemodbusTCPServer(){ //Write updated coils and holding registersw to modBustTCPServer
+  for(int x = 0; x<16; x++){
+    modbusTCPServer.holdingRegisterWrite(x,MB_HR[x]);
+    modbusTCPServer.coilWrite(x,MB_C[x]);
+    modbusTCPServer.discreteInputWrite(x, MB_I[x]);
+    modbusTCPServer.inputRegisterWrite(x, MB_IR[x]);
+ 
+
   }
 }
