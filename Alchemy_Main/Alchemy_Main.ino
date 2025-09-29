@@ -23,7 +23,6 @@ boolean MB_C[16];  //Modbus Coil Bits          R/W
 boolean MB_I[16];  //Modbus Input Bits         R       
 int MB_HR[16];     //Modbus Holding Registers  R
 int MB_IR[16];     //Modbus Input Registers    R/W
-int PumpDirectionPin = 3;
 
 EthernetServer server(502);
 EthernetClient clients[8];
@@ -35,23 +34,27 @@ void setup() {
   Ethernet.begin(mac, ip);
   server.begin(); 
 
+  //Serial1.begin(9600);
+
   if (!modbusTCPServer.begin()) {while (1);} //Start the Modbus TCP server
 
   modbusTCPServer.configureCoils(0x00, 32);             //Coils
   modbusTCPServer.configureDiscreteInputs(0x00, 32);    //Discrete Inputs
   modbusTCPServer.configureHoldingRegisters(0x00, 16);  //Holding Register Words
   modbusTCPServer.configureInputRegisters(0x00, 16);    //Input Register Words
+  modbusTCPServer.coilWrite(13, 1);                      //Setting E-Stop 
+
 }
 
 void loop() {
-
+  
   ModBusTCPService();        // Handles TCP Modbus connection to HMI
   updateArrays();            // Updates Coils, Input Bits, Holding & Input Registers on PLC
-  //updatemodbusTCPServer();   // Updates modbus server values
+  updatemodbusTCPServer();
   
-  // if(MB_I[0] == 0){ //check if E-Stop has been pressed
-  //   reset();
-  // }
+  if(!MB_C[13]){ //check if E-Stop has been pressed
+    reset();
+  }
 
   // //Check for Clean Mode
   // if(MB_C[10]){
@@ -67,7 +70,6 @@ void loop() {
   // if(MB_C[12]){
 
   // }
-
   updatemodbusTCPServer(); //Updates modbus server values
   updateEquipmentStates();  //Write to PLC cards
 }
@@ -76,6 +78,7 @@ void loop() {
 void CleanMode(){
   while(1){
     ModBusTCPService();
+    
     if(!MB_C[10]){
       break;
     }
@@ -142,14 +145,18 @@ void reset(){//set all Modbus data back to default
       modbusTCPServer.coilWrite(x,0);
     }
     
+    modbusTCPServer.coilWrite(x,0);
     modbusTCPServer.holdingRegisterWrite(x,0);
     modbusTCPServer.inputRegisterWrite(x, 0);
     modbusTCPServer.discreteInputWrite(x, 0);
   }
-  
+
   while(1){
-    updatemodbusTCPServer();
-    if(MB_I[0] == 1){ //check if E-Stop has been reset
+    ModBusTCPService(); 
+    updateArrays();
+     updateEquipmentStates();
+
+    if(MB_C[13] == 1){ //check if E-Stop has been reset
       break; 
     }
   }
@@ -158,7 +165,7 @@ void reset(){//set all Modbus data back to default
 void setPumpSpeed(int speed) {
   int dutyCycle = map(speed, 0, 100, 255, 0);
 
-  P1.writePWM(dutyCycle, 20000, 3, 1);
+  P1.writePWM(dutyCycle, 20000, 3, 1);            //Write Duty Cycle to pumpo PWM input
   modbusTCPServer.holdingRegisterWrite(0, speed);
 }
 
@@ -170,6 +177,7 @@ void updateEquipmentStates(){
 
   P1.writeDiscrete(MB_C[8], comboCard, 1); //Mixer On/Off
   P1.writeDiscrete(MB_C[9], comboCard, 2); //Pump Direction
+  
 
   setPumpSpeed(MB_HR[0]);
 }
@@ -208,6 +216,9 @@ void updateArrays(){//Updates Coils, Input Bits, Holding & Input Registers. Read
     MB_IR[i] = modbusTCPServer.inputRegisterRead(i);
     MB_I[i] = modbusTCPServer.discreteInputRead(i);
   }
+
+  MB_C[13] = P1.readDiscrete(comboCard,1);   //E-Estop
+
 }
 
 void updatemodbusTCPServer(){ //Write updated coils and holding registersw to modBustTCPServer
@@ -216,7 +227,5 @@ void updatemodbusTCPServer(){ //Write updated coils and holding registersw to mo
     modbusTCPServer.coilWrite(x,MB_C[x]);
     modbusTCPServer.discreteInputWrite(x, MB_I[x]);
     modbusTCPServer.inputRegisterWrite(x, MB_IR[x]);
- 
-
   }
 }
