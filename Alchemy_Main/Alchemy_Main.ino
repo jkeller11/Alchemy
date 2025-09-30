@@ -6,7 +6,7 @@
 #include <ArduinoModbus.h>
 #include <P1AM.h>
 #include "Functions.h"
-#include "Timer.h"
+#include <arduino-timer.h>
 
 #define relayCard 1
 #define comboCard 2
@@ -19,15 +19,17 @@ byte mac[] = { 0x60, 0x52, 0xD0, 0x07, 0xF5, 0x67 };
 IPAddress ip(192, 168, 1, 178);
 
 //Global Variables
-boolean MB_C[16];  //Modbus Coil Bits          R/W
-boolean MB_I[16];  //Modbus Input Bits         R       
-int MB_HR[16];     //Modbus Holding Registers  R
-int MB_IR[16];     //Modbus Input Registers    R/W
+boolean MB_C[16];     //Modbus Coil Bits          R/W
+boolean MB_I[16];     //Modbus Input Bits         R       
+int MB_HR[16];        //Modbus Holding Registers  R
+int MB_IR[16];        //Modbus Input Registers    R/W
+int mixTime = 180000  //3 minute mix time
 
 EthernetServer server(502);
 EthernetClient clients[8];
 ModbusTCPServer modbusTCPServer;
-Timer timer; //timer object for cleaning and inital mixing
+auto timer = timer_create_default(); // create a timer with default settings for timing mixes
+
 
 void setup() {
   while (!P1.init()){} ; //Wait for P1 Modules to Sign on   
@@ -42,7 +44,9 @@ void setup() {
   modbusTCPServer.configureDiscreteInputs(0x00, 32);    //Discrete Inputs
   modbusTCPServer.configureHoldingRegisters(0x00, 16);  //Holding Register Words
   modbusTCPServer.configureInputRegisters(0x00, 16);    //Input Register Words
-  modbusTCPServer.coilWrite(13, 1);                      //Setting E-Stop 
+  modbusTCPServer.coilWrite(13, 1);                     //Setting E-Stop 
+  
+  timer.every(1000, timeTickModBus);                    //Call timeTickModBus every 1 second
 
 }
 
@@ -79,9 +83,11 @@ void CleanMode(){
   while(1){
     ModBusTCPService();
     
-    if(!MB_C[10]){
+    if(!MB_C[10]){ //check if CleanMode ended
       break;
     }
+	
+	
 
     updatemodbusTCPServer(); //Updates Coils, Input Bits, Holding & Input Registers
 
@@ -92,8 +98,9 @@ void CleanMode(){
     
 
   }
-  reset();
+  reset(1); //reset without E-Stop Check
 }
+
 ///////////////////////////////////////Engineering Mode///////////////////////////////////////////////////////////////////////////////////////////
 void EngineeringMode(){//For troubleshooting purposes
   reset();
@@ -162,6 +169,24 @@ void reset(){//set all Modbus data back to default
   }
 }
 
+void reset(int x){//set all Modbus data back to default takes dummy int to skip E-Stop check
+	for(int x = 0; x <16; x++){
+		if(x!=10 or x!=11 or x!=12){ //avoid overwriting phases
+		  modbusTCPServer.coilWrite(x,0);
+		}
+	
+		modbusTCPServer.coilWrite(x,0);
+		modbusTCPServer.holdingRegisterWrite(x,0);
+		modbusTCPServer.inputRegisterWrite(x, 0);
+		modbusTCPServer.discreteInputWrite(x, 0);
+	}
+	ModBusTCPService(); 
+    updateArrays();
+    updateEquipmentStates();
+  }
+}
+
+
 void setPumpSpeed(int speed) {
   int dutyCycle = map(speed, 0, 100, 255, 0);
 
@@ -169,7 +194,7 @@ void setPumpSpeed(int speed) {
   modbusTCPServer.holdingRegisterWrite(0, speed);
 }
 
-void updateEquipmentStates(){
+void updateEquipmentStates(){ //Writes new states to P1AM cards
   //Update Relay Card - Valves & Pump On/Off
   for (int i = 0; i < 8; i++) {
     P1.writeDiscrete(MB_C[i], relayCard, i + 1);  //Data,Slot,Channel ... Channel is one-based.
@@ -180,6 +205,12 @@ void updateEquipmentStates(){
   
 
   setPumpSpeed(MB_HR[0]);
+}
+
+bool timeTickModBus(void *){ //Writes to "timer" tag every one second
+	MB_HR[11]++; //increment to add second
+	modbusTCPServer.holdingRegisterWrite(11,MB_HR[11]);
+	return true;
 }
 
 ////////////////////////////////////////Utility Functions/////////////////////////////////////////////////////////////////////////////////////////
