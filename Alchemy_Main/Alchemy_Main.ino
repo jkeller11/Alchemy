@@ -5,7 +5,6 @@
 #include <ArduinoRS485.h>
 #include <ArduinoModbus.h>
 #include <P1AM.h>
-#include "Functions.h"
 #include <arduino-timer.h>
 
 #define relayCard 1
@@ -23,12 +22,12 @@ boolean MB_C[16];     //Modbus Coil Bits          R/W
 boolean MB_I[16];     //Modbus Input Bits         R       
 int MB_HR[16];        //Modbus Holding Registers  R
 int MB_IR[16];        //Modbus Input Registers    R/W
-int mixTime = 180000  //3 minute mix time
+int mixTime = 180000;  //3 minute mix time
 
 EthernetServer server(502);
 EthernetClient clients[8];
 ModbusTCPServer modbusTCPServer;
-auto timer = timer_create_default(); // create a timer with default settings for timing mixes
+// auto timer = timer_create_default(); // create a timer with default settings for timing mixes
 
 
 void setup() {
@@ -46,7 +45,7 @@ void setup() {
   modbusTCPServer.configureInputRegisters(0x00, 16);    //Input Register Words
   modbusTCPServer.coilWrite(13, 1);                     //Setting E-Stop 
   
-  timer.every(1000, timeTickModBus);                    //Call timeTickModBus every 1 second
+  // timer.every(1000, timeTickModBus);                    //Call timeTickModBus every 1 second
 
 }
 
@@ -181,9 +180,8 @@ void reset(int x){//set all Modbus data back to default takes dummy int to skip 
 		modbusTCPServer.discreteInputWrite(x, 0);
 	}
 	ModBusTCPService(); 
-    updateArrays();
-    updateEquipmentStates();
-  }
+  updateArrays();
+  updateEquipmentStates();
 }
 
 
@@ -207,11 +205,11 @@ void updateEquipmentStates(){ //Writes new states to P1AM cards
   setPumpSpeed(MB_HR[0]);
 }
 
-bool timeTickModBus(void *){ //Writes to "timer" tag every one second
-	MB_HR[11]++; //increment to add second
-	modbusTCPServer.holdingRegisterWrite(11,MB_HR[11]);
-	return true;
-}
+// bool timeTickModBus(void *){ //Writes to "timer" tag every one second
+// 	MB_HR[11]++; //increment to add second
+// 	modbusTCPServer.holdingRegisterWrite(11,MB_HR[11]);
+// 	return true;
+// }
 
 ////////////////////////////////////////Utility Functions/////////////////////////////////////////////////////////////////////////////////////////
 void ModBusTCPService(){
