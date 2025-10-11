@@ -5,7 +5,6 @@
 #include <ArduinoRS485.h>
 #include <ArduinoModbus.h>
 #include <P1AM.h>
-#include <arduino-timer.h>
 
 #define relayCard 1
 #define comboCard 2
@@ -27,15 +26,12 @@ int mixTime = 180000;  //3 minute mix time
 EthernetServer server(502);
 EthernetClient clients[8];
 ModbusTCPServer modbusTCPServer;
-// auto timer = timer_create_default(); // create a timer with default settings for timing mixes
 
 
 void setup() {
   while (!P1.init()){} ; //Wait for P1 Modules to Sign on   
   Ethernet.begin(mac, ip);
   server.begin(); 
-
-  //Serial1.begin(9600);
 
   if (!modbusTCPServer.begin()) {while (1);} //Start the Modbus TCP server
 
@@ -44,9 +40,6 @@ void setup() {
   modbusTCPServer.configureHoldingRegisters(0x00, 16);  //Holding Register Words
   modbusTCPServer.configureInputRegisters(0x00, 16);    //Input Register Words
   modbusTCPServer.coilWrite(13, 1);                     //Setting E-Stop 
-  
-  // timer.every(1000, timeTickModBus);                    //Call timeTickModBus every 1 second
-
 }
 
 void loop() {
@@ -59,10 +52,10 @@ void loop() {
     reset();
   }
 
-  // //Check for Clean Mode
-  // if(MB_C[10]){
-  //   CleanMode();
-  // }
+  //Check for Clean Mode
+  if(MB_C[10]){
+    CleanMode();
+  }
   
   // //Check for Engineering Mode
   // if(MB_C[11]){
@@ -79,24 +72,123 @@ void loop() {
 
 ///////////////////////////////////////Clean Mode///////////////////////////////////////////////////////////////////////////////////////////////
 void CleanMode(){
-  while(1){
+  unsigned long currentTime = 0;
+  unsigned long startTime = 0;
+  bool dispenseLoopReady = true;
+  bool manualMode = true;
+
+  setSingleOutput(8, comboCard, 8, 1); //turn mixer on
+
+  //update clock and count for 1 minutes
+  while(MB_HR[12] < 1){//Mixing Loop - check if time has been reached
     ModBusTCPService();
+    
+    if(!MB_C[10]){ //check if CleanMode ended cancel clean mode
+      dispenseLoopReady = false;
+      reset();
+      break;
+    }
+    if(!MB_C[13]){//check if E-stop has been pressed
+      dispenseLoopReady = false;
+      reset(1);
+      break;;
+    }
+    
+    //Handles updating clock
+    currentTime = millis();
+    if(currentTime - startTime >= 1000){ // increment second or hour tag
+      if(MB_HR[11] == 59){
+        MB_HR[11] = 0;
+        MB_HR[12]++;
+      }else{
+        MB_HR[11]++;
+      }
+      startTime = currentTime;
+    }
+
+    updatemodbusTCPServer(); //Updates Coils, Input Bits, Holding & Input Registers
+  }
+
+  // setSingleOutput(8, comboCard, 8, 0); //turn mixer off
+  setPumpSpeed(100);
+  setSingleOutput(7, comboCard, 7, 1); //turn mixer off
+  
+  int valve = 6;
+  currentTime = 0;
+  unsigned long startTimeSec = 0;
+  unsigned long startTimeHalfMin = 0;
+
+  while(dispenseLoopReady){//Dispensing Loop
+    ModBusTCPService();
+    updateArrays();            // Updates Coils, Input Bits, Holding & Input Registers on PLC
+    updatemodbusTCPServer();
     
     if(!MB_C[10]){ //check if CleanMode ended
       break;
     }
-	
-	
+    if(!MB_C[13]){//check if E-stop has been pressed
+      reset();
+      break;;
+    }
+    
+    //Handles updating clock
+    currentTime = millis();
+    if(currentTime - startTimeSec >= 1000){ // increment second or hour tag
+      if(MB_HR[11] == 59){
+        MB_HR[11] = 0;
+        MB_HR[12]++;
+      }else{
+        MB_HR[11]++;
+      }
+      startTimeSec = currentTime;
+    }
+
+    //Open valves right to left
+    if((currentTime - startTimeHalfMin >= 30000) && (valve > 0)){
+      setSingleOutput(valve, relayCard, valve, 1); //open valve
+      valve--;
+      startTimeHalfMin = currentTime;
+    }
+    else if((currentTime - startTimeHalfMin >= 30000) && (valve < 0)){
+      setSingleOutput((valve*-1), relayCard, (valve*-1), 0); //close valve
+      startTimeHalfMin = currentTime;
+      valve++;
+    }
+
+    if(valve == 0){
+      valve = -6;
+    }
 
     updatemodbusTCPServer(); //Updates Coils, Input Bits, Holding & Input Registers
+    updateEquipmentStates(); //Update PLC cards
 
-    //start timer and mix
-    //run pump for 3 minutes flush each valvue in order for 30 sec
-    //allow manual operation of flushing
-    //pop up recommend cleaing message
-    
 
+
+    if(!MB_C[1] && !MB_C[2] && !MB_C[3] && !MB_C[4] && !MB_C[5] && !MB_C[6]){//once all valves close again
+      dispenseLoopReady = false;
+    }
   }
+
+
+  //Manual jog mode - allow use of buttons
+  while(manualMode)){
+    ModBusTCPService();        // Handles TCP Modbus connection to HMI
+    updateArrays();            // Updates Coils, Input Bits, Holding & Input Registers on PLC
+    updatemodbusTCPServer();
+    
+    if(!MB_C[10]){ //check if CleanMode ended or if E-stop has been pressed... cancel clean mode
+      reset();
+      break;
+    }
+    if(!MB_C[13]){//check if E-stop has been pressed
+      reset(1);
+      break;;
+    }
+    updatemodbusTCPServer(); //Updates Coils, Input Bits, Holding & Input Registers
+    updateEquipmentStates(); //Update PLC cards
+  }
+
+
   reset(1); //reset without E-Stop Check
 }
 
@@ -168,7 +260,7 @@ void reset(){//set all Modbus data back to default
   }
 }
 
-void reset(int x){//set all Modbus data back to default takes dummy int to skip E-Stop check
+void reset(int y){//set all Modbus data back to default takes dummy int to skip E-Stop check
 	for(int x = 0; x <16; x++){
 		if(x!=10 or x!=11 or x!=12){ //avoid overwriting phases
 		  modbusTCPServer.coilWrite(x,0);
@@ -204,12 +296,6 @@ void updateEquipmentStates(){ //Writes new states to P1AM cards
 
   setPumpSpeed(MB_HR[0]);
 }
-
-// bool timeTickModBus(void *){ //Writes to "timer" tag every one second
-// 	MB_HR[11]++; //increment to add second
-// 	modbusTCPServer.holdingRegisterWrite(11,MB_HR[11]);
-// 	return true;
-// }
 
 ////////////////////////////////////////Utility Functions/////////////////////////////////////////////////////////////////////////////////////////
 void ModBusTCPService(){
@@ -257,4 +343,11 @@ void updatemodbusTCPServer(){ //Write updated coils and holding registersw to mo
     modbusTCPServer.discreteInputWrite(x, MB_I[x]);
     modbusTCPServer.inputRegisterWrite(x, MB_IR[x]);
   }
+}
+
+void setSingleOutput(int index, int card, int address, int value){
+  MB_C[index] = value;
+  P1.writeDiscrete(MB_C[index], card, 1);
+  modbusTCPServer.inputRegisterWrite(address, MB_IR[index]);
+
 }
