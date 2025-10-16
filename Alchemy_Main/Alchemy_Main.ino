@@ -75,7 +75,6 @@ void CleanMode(){
   unsigned long currentTime = 0;
   unsigned long startTime = 0;
   bool dispenseLoopReady = true;
-  bool manualMode = true;
 
   setSingleOutput(8, comboCard, 8, 1); //turn mixer on
 
@@ -120,7 +119,7 @@ void CleanMode(){
 
   while(dispenseLoopReady){//Dispensing Loop
     ModBusTCPService();
-    updateArrays();            // Updates Coils, Input Bits, Holding & Input Registers on PLC
+    updateArrays();            
     updatemodbusTCPServer();
     
     if(!MB_C[10]){ //check if CleanMode ended
@@ -149,13 +148,14 @@ void CleanMode(){
       valve--;
       startTimeHalfMin = currentTime;
     }
+    //closes valves right to left
     else if((currentTime - startTimeHalfMin >= 30000) && (valve < 0)){
       setSingleOutput((valve*-1), relayCard, (valve*-1), 0); //close valve
       startTimeHalfMin = currentTime;
       valve++;
     }
 
-    if(valve == 0){
+    if(valve == 0){ //Swap back to firs valve
       valve = -6;
     }
 
@@ -164,28 +164,9 @@ void CleanMode(){
 
 
 
-    if(!MB_C[1] && !MB_C[2] && !MB_C[3] && !MB_C[4] && !MB_C[5] && !MB_C[6]){//once all valves close again
+    if(!MB_C[1] && !MB_C[2] && !MB_C[3] && !MB_C[4] && !MB_C[5] && !MB_C[6]){//once all valves are closed
       dispenseLoopReady = false;
     }
-  }
-
-
-  //Manual jog mode - allow use of buttons
-  while(manualMode)){
-    ModBusTCPService();        // Handles TCP Modbus connection to HMI
-    updateArrays();            // Updates Coils, Input Bits, Holding & Input Registers on PLC
-    updatemodbusTCPServer();
-    
-    if(!MB_C[10]){ //check if CleanMode ended or if E-stop has been pressed... cancel clean mode
-      reset();
-      break;
-    }
-    if(!MB_C[13]){//check if E-stop has been pressed
-      reset(1);
-      break;;
-    }
-    updatemodbusTCPServer(); //Updates Coils, Input Bits, Holding & Input Registers
-    updateEquipmentStates(); //Update PLC cards
   }
 
 
@@ -278,7 +259,7 @@ void reset(int y){//set all Modbus data back to default takes dummy int to skip 
 
 
 void setPumpSpeed(int speed) {
-  int dutyCycle = map(speed, 0, 100, 255, 0);
+  int dutyCycle = map(speed, 100, 0, 255, 0);
 
   P1.writePWM(dutyCycle, 20000, 3, 1);            //Write Duty Cycle to pumpo PWM input
   modbusTCPServer.holdingRegisterWrite(0, speed);
