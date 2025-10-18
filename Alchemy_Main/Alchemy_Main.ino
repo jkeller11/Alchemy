@@ -43,10 +43,8 @@ void setup() {
 }
 
 void loop() {
-  
   ModBusTCPService();        // Handles TCP Modbus connection to HMI
   updateArrays();            // Updates Coils, Input Bits, Holding & Input Registers on PLC
-  updatemodbusTCPServer();
   
   if(!MB_C[13]){ //check if E-Stop has been pressed
     reset();
@@ -56,11 +54,6 @@ void loop() {
   if(MB_C[10]){
     CleanMode();
   }
-  
-  // //Check for Engineering Mode
-  // if(MB_C[11]){
-
-  // }
 
   // //Check for Production Mode
   // if(MB_C[12]){
@@ -76,11 +69,14 @@ void CleanMode(){
   unsigned long startTime = 0;
   bool dispenseLoopReady = true;
 
-  setSingleOutput(8, comboCard, 8, 1); //turn mixer on
+  setSingleOutput(8, comboCard, 1, 1); //turn mixer on
 
   //update clock and count for 1 minutes
   while(MB_HR[12] < 1){//Mixing Loop - check if time has been reached
     ModBusTCPService();
+    updatemodbusTCPServer();
+    updateArrays();           
+    
     
     if(!MB_C[10]){ //check if CleanMode ended cancel clean mode
       dispenseLoopReady = false;
@@ -90,7 +86,7 @@ void CleanMode(){
     if(!MB_C[13]){//check if E-stop has been pressed
       dispenseLoopReady = false;
       reset(1);
-      break;;
+      break;
     }
     
     //Handles updating clock
@@ -108,9 +104,10 @@ void CleanMode(){
     updatemodbusTCPServer(); //Updates Coils, Input Bits, Holding & Input Registers
   }
 
-  // setSingleOutput(8, comboCard, 8, 0); //turn mixer off
+  
   setPumpSpeed(100);
-  setSingleOutput(7, comboCard, 7, 1); //turn mixer off
+  setSingleOutput(7, relayCard, 1, 8); //turn on Pump
+  setSingleOutput(0, relayCard, 1, 1); //Open Main Valve
   
   int valve = 6;
   currentTime = 0;
@@ -119,8 +116,7 @@ void CleanMode(){
 
   while(dispenseLoopReady){//Dispensing Loop
     ModBusTCPService();
-    updateArrays();            
-    updatemodbusTCPServer();
+    updateArrays();   
     
     if(!MB_C[10]){ //check if CleanMode ended
       break;
@@ -144,13 +140,13 @@ void CleanMode(){
 
     //Open valves right to left
     if((currentTime - startTimeHalfMin >= 30000) && (valve > 0)){
-      setSingleOutput(valve, relayCard, valve, 1); //open valve
+      setSingleOutput(valve, relayCard, 1, valve+1); //open valve
       valve--;
       startTimeHalfMin = currentTime;
     }
     //closes valves right to left
     else if((currentTime - startTimeHalfMin >= 30000) && (valve < 0)){
-      setSingleOutput((valve*-1), relayCard, (valve*-1), 0); //close valve
+      setSingleOutput((valve*-1), relayCard, 0, (valve*-1)+1); //close valve
       startTimeHalfMin = currentTime;
       valve++;
     }
@@ -161,8 +157,6 @@ void CleanMode(){
 
     updatemodbusTCPServer(); //Updates Coils, Input Bits, Holding & Input Registers
     updateEquipmentStates(); //Update PLC cards
-
-
 
     if(!MB_C[1] && !MB_C[2] && !MB_C[3] && !MB_C[4] && !MB_C[5] && !MB_C[6]){//once all valves are closed
       dispenseLoopReady = false;
@@ -272,7 +266,7 @@ void updateEquipmentStates(){ //Writes new states to P1AM cards
   }
 
   P1.writeDiscrete(MB_C[8], comboCard, 1); //Mixer On/Off
-  P1.writeDiscrete(MB_C[9], comboCard, 2); //Pump Direction
+  P1.writeDiscrete(MB_C[9], comboCard, 2); //Pump direction
   
 
   setPumpSpeed(MB_HR[0]);
@@ -309,8 +303,8 @@ void updateArrays(){//Updates Coils, Input Bits, Holding & Input Registers. Read
   for (int i = 0; i < 16; i++) {
     MB_C[i] = modbusTCPServer.coilRead(i);
     MB_HR[i] = modbusTCPServer.holdingRegisterRead(i);
-    MB_IR[i] = modbusTCPServer.inputRegisterRead(i);
-    MB_I[i] = modbusTCPServer.discreteInputRead(i);
+    //MB_IR[i] = modbusTCPServer.inputRegisterRead(i);
+    //MB_I[i] = modbusTCPServer.discreteInputRead(i);
   }
 
   MB_C[13] = P1.readDiscrete(comboCard,1);   //E-Estop
@@ -321,14 +315,14 @@ void updatemodbusTCPServer(){ //Write updated coils and holding registersw to mo
   for(int x = 0; x<16; x++){
     modbusTCPServer.holdingRegisterWrite(x,MB_HR[x]);
     modbusTCPServer.coilWrite(x,MB_C[x]);
-    modbusTCPServer.discreteInputWrite(x, MB_I[x]);
-    modbusTCPServer.inputRegisterWrite(x, MB_IR[x]);
+    //modbusTCPServer.discreteInputWrite(x, MB_I[x]);
+    //modbusTCPServer.inputRegisterWrite(x, MB_IR[x]);
   }
 }
 
-void setSingleOutput(int index, int card, int address, int value){
+void setSingleOutput(int index, int card, int value, int channel){
   MB_C[index] = value;
-  P1.writeDiscrete(MB_C[index], card, 1);
-  modbusTCPServer.inputRegisterWrite(address, MB_IR[index]);
+  P1.writeDiscrete(MB_C[index], card, channel);
+  modbusTCPServer.coilWrite(index, MB_C[index]);
 
 }
