@@ -251,7 +251,6 @@ void reset(int y){//set all Modbus data back to default takes dummy int to skip 
   updateEquipmentStates();
 }
 
-
 void setPumpSpeed(int speed) {
   int dutyCycle = map(speed, 100, 0, 255, 0);
 
