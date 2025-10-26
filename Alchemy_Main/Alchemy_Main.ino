@@ -5,6 +5,7 @@
 #include <ArduinoRS485.h>
 #include <ArduinoModbus.h>
 #include <P1AM.h>
+#include <FIFObuf.h>
 
 #define relayCard 1
 #define comboCard 2
@@ -17,15 +18,14 @@ byte mac[] = { 0x60, 0x52, 0xD0, 0x07, 0xF5, 0x67 };
 IPAddress ip(192, 168, 1, 178);
 
 //Global Variables
-boolean MB_C[16];     //Modbus Coil Bits          R/W
-boolean MB_I[16];     //Modbus Input Bits         R       
-int MB_HR[16];        //Modbus Holding Registers  R
-int MB_IR[16];        //Modbus Input Registers    R/W
+boolean MB_C[32];     //Modbus Coil Bits          R/W   
+int MB_HR[32];        //Modbus Holding Registers  R
 int mixTime = 180000;  //3 minute mix time
 
 EthernetServer server(502);
 EthernetClient clients[8];
 ModbusTCPServer modbusTCPServer;
+
 
 
 void setup() {
@@ -36,10 +36,11 @@ void setup() {
   if (!modbusTCPServer.begin()) {while (1);} //Start the Modbus TCP server
 
   modbusTCPServer.configureCoils(0x00, 32);             //Coils
-  modbusTCPServer.configureDiscreteInputs(0x00, 32);    //Discrete Inputs
-  modbusTCPServer.configureHoldingRegisters(0x00, 16);  //Holding Register Words
-  modbusTCPServer.configureInputRegisters(0x00, 16);    //Input Register Words
+  modbusTCPServer.configureDiscreteInputs(0x00, 16);    //Discrete Inputs
   modbusTCPServer.coilWrite(13, 1);                     //Setting E-Stop 
+
+  //Set Defaults
+  MB_C[9] = 1; //CCW pump Direction
 }
 
 void loop() {
@@ -56,9 +57,9 @@ void loop() {
   }
 
   // //Check for Production Mode
-  // if(MB_C[12]){
-
-  // }
+  if(MB_C[12]){
+    ProductionMode();
+  }
   updatemodbusTCPServer(); //Updates modbus server values
   updateEquipmentStates();  //Write to PLC cards
 }
@@ -140,7 +141,11 @@ void CleanMode(){
 
     //Open valves right to left
     if((currentTime - startTimeHalfMin >= 30000) && (valve > 0)){
-      setSingleOutput(valve, relayCard, 1, valve+1); //open valve
+      
+      //Check if OOS
+      if(!MB_C[(valve + 16)]){
+        setSingleOutput(valve, relayCard, 1, valve+1); //open valve
+      }
       valve--;
       startTimeHalfMin = currentTime;
     }
@@ -163,61 +168,98 @@ void CleanMode(){
     }
   }
 
-
   reset(1); //reset without E-Stop Check
 }
 
-///////////////////////////////////////Engineering Mode///////////////////////////////////////////////////////////////////////////////////////////
-void EngineeringMode(){//For troubleshooting purposes
-  reset();
-
-  while(1){
-    ModBusTCPService();
-    if(!MB_C[11]){
-      break;
-    }
-
-    updatemodbusTCPServer(); //Updates Coils, Input Bits, Holding & Input Registers
-
-
-
-
-  }
-  reset();
-}
 ///////////////////////////////////////Production Mode////////////////////////////////////////////////////////////////////////////////////////////
 void ProductionMode(){
-  while(1){
+
+  //TODO
+  // - Adjust endTime based on flowrate(tankVolume) and bottle size
+
+  //Prod Setup
+  float StartingVolume = MB_HR[13] * MB_HR[9]; //In MiliLiters
+  float FlowRate;
+  bool dispeningLock = false;
+  unsigned long startTime = 0;
+  int endTime = 3000;
+  int index = 0;
+  
+  // FIFO buffer for production mode
+  FIFObuf<int> Queue(6);
+
+
+  //Set Bottles Enum to "Not Ready"
+  for(int x = 1; x <= 6; x++){
+    MB_HR[x] = 1;
+  }
+
+  while(MB_C[10]){
     ModBusTCPService();
-    if(!MB_C[12]){
+    updatemodbusTCPServer();
+    updateArrays();           
+    
+    if(!MB_C[13]){//check if E-stop has been pressed
+      reset();
       break;
     }
 
+    //Check for readied up stations and push to FIFO Queue
+    for(int x = 1; x <= 6; x++){
+      if(MB_HR[x] == 2){
+        Queue.push(x); //Add to queue when ready
+        MB_HR[x]++;    //Increment station state
+      }
+    }
+
+    //Process Queue if station open, prod not paused and item in queue
+    if(Queue.size() != 0 && !dispeningLock && !MB_C[24]){
+      dispeningLock = true;
+
+      setPumpSpeed(100);
+      setSingleOutput(7, relayCard, 1, 8); //turn on Pump
+      setSingleOutput(0, relayCard, 1, 1); //Open Main Valve
+
+      index = Queue.pop();
+
+      setSingleOutput(index, relayCard, 1, index+1); //Open next up Valve
+      MB_HR[index]++; //Increment status to filling
+
+      startTime = millis();
+    }
+
+    if(millis() - startTime >= endTime && dispeningLock){
+      
+      setSingleOutput(index, relayCard, 0, index+1); //Close next up Valve
+
+      dispeningLock = false;
+
+      //If no other valve ready shut off pump and main solenoid
+      if(Queue.size() == 0){
+        setSingleOutput(7, relayCard, 0, 8); //turn off Pump
+        setSingleOutput(0, relayCard, 0, 1); //Close Main Valve
+      }
+
+      MB_HR[10]++; //increment complete counter
+      MB_HR[index]++; //Increment status to filled
+    }
+
+    //Check if bottle count is reached
+    if(MB_HR[10] == MB_HR[9]){
+      MB_C[25] = 1;
+      MB_HR[10]--; //decrement bottle count so if no is selected mode can continue
+    }
+
+   
     updatemodbusTCPServer(); //Updates Coils, Input Bits, Holding & Input Registers
-
-    //allow entry of # of bottles
-    //calc flow rate via recipe on HMI
-    //Prompt to confirm medicine added
-    //Start time and mix for X minuites... allow for canceling ealry
-    //once canceled or mixing fnished prompt to begin
-    //start cycle of dispensing group one (time via flowrate estimate)  jog to fill remainder
-    //confirm next group 2 start
-    //repeat until bottle # reached or canceled ealry
-    //Once tranitioning to complete message to go to manual mode and finish dispensing
-    
-
+    updateEquipmentStates(); //Update PLC cards
   }
-  reset();
+  reset(1);//reset without E-Stop Check
 }
 
 ///////////////////////////////////////Equipment Functions////////////////////////////////////////////////////////////////////////////////////////
-void reset(){//set all Modbus data back to default
-  for(int x = 0; x <16; x++){
-
-    if(x!=10 or x!=11 or x!=12){ //avoid overwriting phases
-      modbusTCPServer.coilWrite(x,0);
-    }
-    
+void reset(){//set all Modbus data back to default and waits for E-Stop reset
+  for(int x = 0; x <16; x++){   
     modbusTCPServer.coilWrite(x,0);
     modbusTCPServer.holdingRegisterWrite(x,0);
     modbusTCPServer.inputRegisterWrite(x, 0);
@@ -227,7 +269,7 @@ void reset(){//set all Modbus data back to default
   while(1){
     ModBusTCPService(); 
     updateArrays();
-     updateEquipmentStates();
+    updateEquipmentStates();
 
     if(MB_C[13] == 1){ //check if E-Stop has been reset
       break; 
@@ -235,17 +277,28 @@ void reset(){//set all Modbus data back to default
   }
 }
 
-void reset(int y){//set all Modbus data back to default takes dummy int to skip E-Stop check
-	for(int x = 0; x <16; x++){
-		if(x!=10 or x!=11 or x!=12){ //avoid overwriting phases
+void reset(int mode){//set all Modbus data back to default can skip some depedning on input
+  if(mode == 1){// Full Reset
+    for(int x = 0; x <32; x++){
+      modbusTCPServer.coilWrite(x,0);
+      modbusTCPServer.holdingRegisterWrite(x,0);
+      //modbusTCPServer.inputRegisterWrite(x, 0);
+      //modbusTCPServer.discreteInputWrite(x, 0);
+	  }
+  }
+  else if(mode == 2){//Full Reset Skipping Mode Tags
+    for(int x = 0; x <32; x++){
+		
+    if(x!=12 or x!=10){ //avoid overwriting phases
 		  modbusTCPServer.coilWrite(x,0);
 		}
-	
-		modbusTCPServer.coilWrite(x,0);
+		
 		modbusTCPServer.holdingRegisterWrite(x,0);
-		modbusTCPServer.inputRegisterWrite(x, 0);
-		modbusTCPServer.discreteInputWrite(x, 0);
-	}
+		//modbusTCPServer.inputRegisterWrite(x, 0);
+		//modbusTCPServer.discreteInputWrite(x, 0);
+	  }
+  }
+	
 	ModBusTCPService(); 
   updateArrays();
   updateEquipmentStates();
@@ -299,11 +352,9 @@ void ModBusTCPService(){
 }
 
 void updateArrays(){//Updates Coils, Input Bits, Holding & Input Registers. Reads from modbusTCPServer(HMI)
-  for (int i = 0; i < 16; i++) {
+  for (int i = 0; i < 32; i++) {
     MB_C[i] = modbusTCPServer.coilRead(i);
     MB_HR[i] = modbusTCPServer.holdingRegisterRead(i);
-    //MB_IR[i] = modbusTCPServer.inputRegisterRead(i);
-    //MB_I[i] = modbusTCPServer.discreteInputRead(i);
   }
 
   MB_C[13] = P1.readDiscrete(comboCard,1);   //E-Estop
@@ -311,11 +362,9 @@ void updateArrays(){//Updates Coils, Input Bits, Holding & Input Registers. Read
 }
 
 void updatemodbusTCPServer(){ //Write updated coils and holding registersw to modBustTCPServer
-  for(int x = 0; x<16; x++){
+  for(int x = 0; x<32; x++){
     modbusTCPServer.holdingRegisterWrite(x,MB_HR[x]);
     modbusTCPServer.coilWrite(x,MB_C[x]);
-    //modbusTCPServer.discreteInputWrite(x, MB_I[x]);
-    //modbusTCPServer.inputRegisterWrite(x, MB_IR[x]);
   }
 }
 
