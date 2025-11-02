@@ -20,13 +20,10 @@ IPAddress ip(192, 168, 1, 178);
 //Global Variables
 boolean MB_C[32];     //Modbus Coil Bits          R/W   
 int MB_HR[32];        //Modbus Holding Registers  R
-int mixTime = 180000;  //3 minute mix time
 
 EthernetServer server(502);
 EthernetClient clients[8];
 ModbusTCPServer modbusTCPServer;
-
-
 
 void setup() {
   while (!P1.init()){} ; //Wait for P1 Modules to Sign on   
@@ -36,15 +33,14 @@ void setup() {
   if (!modbusTCPServer.begin()) {while (1);} //Start the Modbus TCP server
 
   modbusTCPServer.configureCoils(0x00, 32);             //Coils
-  modbusTCPServer.configureDiscreteInputs(0x00, 16);    //Discrete Inputs
-  modbusTCPServer.coilWrite(13, 1);                     //Setting E-Stop 
+  modbusTCPServer.configureHoldingRegisters(0x00, 32);    //Holding Registers
 
-  //Set Defaults
-  MB_C[9] = 1; //CCW pump Direction
+  modbusTCPServer.coilWrite(9, 1); //Set Pump to CW
 }
 
 void loop() {
-  ModBusTCPService();        // Handles TCP Modbus connection to HMI
+  ModBusTCPService();
+  //updatemodbusTCPServer();        // Handles TCP Modbus connection to HMI
   updateArrays();            // Updates Coils, Input Bits, Holding & Input Registers on PLC
   
   if(!MB_C[13]){ //check if E-Stop has been pressed
@@ -60,6 +56,7 @@ void loop() {
   if(MB_C[12]){
     ProductionMode();
   }
+
   updatemodbusTCPServer(); //Updates modbus server values
   updateEquipmentStates();  //Write to PLC cards
 }
@@ -173,35 +170,86 @@ void CleanMode(){
 
 ///////////////////////////////////////Production Mode////////////////////////////////////////////////////////////////////////////////////////////
 void ProductionMode(){
-
-  //TODO
-  // - Adjust endTime based on flowrate(tankVolume) and bottle size
+  ModBusTCPService();
+  updateArrays(); 
 
   //Prod Setup
-  float StartingVolume = MB_HR[13] * MB_HR[9]; //In MiliLiters
   float FlowRate;
   bool dispeningLock = false;
+  bool jogLock = false;
+  bool jogmode = false;
   unsigned long startTime = 0;
-  int endTime = 3000;
+  float TankRate = 29; //Added flowrate from tank - calculated in excel sheet
+  float ConstantRate = 1370 ; //contant from pump - calculated in excel sheet
+  float bottleSize;
+  float endTime;
   int index = 0;
-  
-  // FIFO buffer for production mode
-  FIFObuf<int> Queue(6);
-
 
   //Set Bottles Enum to "Not Ready"
   for(int x = 1; x <= 6; x++){
     MB_HR[x] = 1;
   }
+  
+  // FIFO buffer for production mode
+  FIFObuf<int> Queue(6);
 
-  while(MB_C[10]){
+  updatemodbusTCPServer(); //Updates modbus server values
+  updateEquipmentStates();
+
+  if(MB_HR[13] == 1){
+    bottleSize = 110;
+  }
+  else if(MB_HR[13] == 2){
+    bottleSize = 235;
+  }
+  else if(MB_HR[13] == 3){
+    bottleSize == 600;
+  }
+ 
+  float tankVolume = bottleSize * MB_HR[9]; //In MiliLiters
+
+  tankVolume = 12000;
+  bottleSize = 600;
+
+  //Start
+  while(MB_C[12]){
     ModBusTCPService();
-    updatemodbusTCPServer();
     updateArrays();           
     
     if(!MB_C[13]){//check if E-stop has been pressed
       reset();
       break;
+    }
+
+    //Jog Mode On
+    if(MB_C[23]){
+      setPumpSpeed(90);
+      setSingleOutput(7, relayCard, 1, 8); //turn on Pump
+      setSingleOutput(0, relayCard, 1, 1); //Open Main Valve
+
+      jogLock = true;
+    }
+    //Jog Mode Off
+    if(jogLock && !MB_C[23]){
+      setSingleOutput(7, relayCard, 0, 8); //turn off Pump
+      
+      for(int x = 0; x<=6; x++){
+        setSingleOutput(x, relayCard, 0, x+1); //close valves
+      }
+      
+      setPumpSpeed(100);
+
+      jogLock = false;
+    }
+
+    //Ensuring valves turn off when exsiting jog mode
+    if(MB_C[24]){
+      jogmode = true;
+    }
+    if(!MB_C[24] && jogmode){
+      for(int x = 0; x<=6; x++){
+        setSingleOutput(x, relayCard, 0, x+1); //close valves
+      }
     }
 
     //Check for readied up stations and push to FIFO Queue
@@ -219,6 +267,7 @@ void ProductionMode(){
       setPumpSpeed(100);
       setSingleOutput(7, relayCard, 1, 8); //turn on Pump
       setSingleOutput(0, relayCard, 1, 1); //Open Main Valve
+      modbusTCPServer.coilWrite(9, 1); //Set Pump to CW
 
       index = Queue.pop();
 
@@ -226,22 +275,25 @@ void ProductionMode(){
       MB_HR[index]++; //Increment status to filling
 
       startTime = millis();
+      endTime = (bottleSize / ((TankRate * ((tankVolume - (MB_HR[10]* bottleSize)) / 3785)) + ConstantRate)) * 60000;
+      MB_HR[15] = endTime;
+      //endTime = 15000;
     }
 
-    if(millis() - startTime >= endTime && dispeningLock){
+    if((millis() - startTime) >= endTime && dispeningLock){
       
       setSingleOutput(index, relayCard, 0, index+1); //Close next up Valve
 
       dispeningLock = false;
 
-      //If no other valve ready shut off pump and main solenoid
-      if(Queue.size() == 0){
+      MB_HR[10]++; //increment complete counter
+      MB_HR[index]++; //Increment status to filled
+
+      //If no other valves are ready or bottle count has been reached -  shut off pump and main solenoid
+      if(Queue.size() == 0 || MB_HR[10] == MB_HR[9]){
         setSingleOutput(7, relayCard, 0, 8); //turn off Pump
         setSingleOutput(0, relayCard, 0, 1); //Close Main Valve
       }
-
-      MB_HR[10]++; //increment complete counter
-      MB_HR[index]++; //Increment status to filled
     }
 
     //Check if bottle count is reached
@@ -250,9 +302,8 @@ void ProductionMode(){
       MB_HR[10]--; //decrement bottle count so if no is selected mode can continue
     }
 
-   
     updatemodbusTCPServer(); //Updates Coils, Input Bits, Holding & Input Registers
-    updateEquipmentStates(); //Update PLC cards
+    updateEquipmentStates();
   }
   reset(1);//reset without E-Stop Check
 }
@@ -305,9 +356,12 @@ void reset(int mode){//set all Modbus data back to default can skip some depedni
 }
 
 void setPumpSpeed(int speed) {
+
+  MB_HR[0] = speed;
+
   int dutyCycle = map(speed, 100, 0, 255, 0);
 
-  P1.writePWM(dutyCycle, 20000, 3, 1);            //Write Duty Cycle to pumpo PWM input
+  P1.writePWM(dutyCycle, 20000, 3, 1);            //Write Duty Cycle to pump PWM input
   modbusTCPServer.holdingRegisterWrite(0, speed);
 }
 
@@ -319,7 +373,6 @@ void updateEquipmentStates(){ //Writes new states to P1AM cards
 
   P1.writeDiscrete(MB_C[8], comboCard, 1); //Mixer On/Off
   P1.writeDiscrete(MB_C[9], comboCard, 2); //Pump direction
-  
 
   setPumpSpeed(MB_HR[0]);
 }
