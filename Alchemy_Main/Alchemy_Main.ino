@@ -29,7 +29,6 @@ void setup() {
   while (!P1.init()){} ; //Wait for P1 Modules to Sign on   
   Ethernet.begin(mac, ip);
   server.begin(); 
-  Serial.begin(9600);
 
   if (!modbusTCPServer.begin()) {while (1);} //Start the Modbus TCP server
 
@@ -185,6 +184,7 @@ void ProductionMode(){
   float bottleSize;
   float endTime = 0;
   int index = 0;
+  float offset[6] = {0,0,0,0,0,0};
 
   //Set Bottles Enum to "Not Ready"
   for(int x = 1; x <= 6; x++){
@@ -205,7 +205,6 @@ void ProductionMode(){
     ModBusTCPService();
     updateArrays();           
    
-    
     if(!MB_C[13]){//check if E-stop has been pressed
       reset();
       break;
@@ -226,7 +225,6 @@ void ProductionMode(){
       for(int x = 0; x<=6; x++){
         setSingleOutput(x, relayCard, 0, x+1); //close valves
       }
-      
       setPumpSpeed(100);
 
       jogLock = false;
@@ -240,6 +238,11 @@ void ProductionMode(){
       for(int x = 0; x<=6; x++){
         setSingleOutput(x, relayCard, 0, x+1); //close valves
       }
+    }
+
+    //Offset Logic Assign values
+    for(int x = 1; x<=6; x++){
+      offset[x] = MB_HR[x+15]
     }
 
     //Check for readied up stations and push to FIFO Queue
@@ -277,24 +280,8 @@ void ProductionMode(){
       int tankVolume = bottleSize * MB_HR[9]; //In MiliLiters
 
       float flowrate = float(TankRate * float(tankVolume - float((MB_HR[10] * bottleSize)))/3785) + ConstantRate;
-      endTime = float(bottleSize / flowrate) * 60000;
 
-      Serial.print("bottleSize: ");
-      Serial.println(bottleSize);
-      Serial.print("TankRate: ");
-      Serial.println(TankRate);
-      Serial.print("Tank Volume: ");
-      Serial.println(tankVolume);
-      Serial.print("completed bottles: ");
-      Serial.println(MB_HR[10]);
-      Serial.print("constant Rate: ");
-      Serial.println(ConstantRate);
-      Serial.print("endTime: ");
-      Serial.println(endTime);
-      Serial.print("target bottles: ");
-      Serial.println(MB_HR[9]);
-      Serial.print("Flow Raste ");
-      Serial.println(flowrate);
+      endTime = float(bottleSize / flowrate) * 60000 + offset[index];
 
       startTime = millis();
     }
