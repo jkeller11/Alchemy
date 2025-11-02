@@ -49,11 +49,13 @@ void loop() {
 
   //Check for Clean Mode
   if(MB_C[10]){
+    reset(3);
     CleanMode();
   }
 
   // //Check for Production Mode
   if(MB_C[12]){
+
     ProductionMode();
   }
 
@@ -179,8 +181,8 @@ void ProductionMode(){
   bool jogLock = false;
   bool jogmode = false;
   unsigned long startTime = 0;
-  float TankRate = 29; //Added flowrate from tank - calculated in excel sheet
-  float ConstantRate = 1370 ; //contant from pump - calculated in excel sheet
+  float TankRate = 28; //Added flowrate from tank - calculated in excel sheet
+  float ConstantRate = 1300 ; //contant from pump - calculated in excel sheet
   float bottleSize;
   float endTime;
   int index = 0;
@@ -193,23 +195,26 @@ void ProductionMode(){
   // FIFO buffer for production mode
   FIFObuf<int> Queue(6);
 
+  modbusTCPServer.coilWrite(9, 1); //Set Pump to CW
+  MB_C[9] = 1;
+
   updatemodbusTCPServer(); //Updates modbus server values
   updateEquipmentStates();
 
   if(MB_HR[13] == 1){
-    bottleSize = 110;
+    bottleSize = 120;
   }
   else if(MB_HR[13] == 2){
-    bottleSize = 235;
+    bottleSize = 250;
   }
   else if(MB_HR[13] == 3){
-    bottleSize == 600;
+    bottleSize == 625;
   }
  
   float tankVolume = bottleSize * MB_HR[9]; //In MiliLiters
 
-  tankVolume = 12000;
-  bottleSize = 600;
+  //tankVolume = 12000;
+  //bottleSize = 600;
 
   //Start
   while(MB_C[12]){
@@ -276,8 +281,20 @@ void ProductionMode(){
 
       startTime = millis();
       endTime = (bottleSize / ((TankRate * ((tankVolume - (MB_HR[10]* bottleSize)) / 3785)) + ConstantRate)) * 60000;
+
+      if(bottleSize == 250){
+        endTime = endTime + 2500;
+      }
+
+      if(bottleSize == 120){
+        endTime = endTime + 500;
+      }
+
+      if(bottleSize == 625){
+        endTime = endTime + 500;
+      }
+
       MB_HR[15] = endTime;
-      //endTime = 15000;
     }
 
     if((millis() - startTime) >= endTime && dispeningLock){
@@ -349,6 +366,15 @@ void reset(int mode){//set all Modbus data back to default can skip some depedni
 		//modbusTCPServer.discreteInputWrite(x, 0);
 	  }
   }
+  else if(mode ==3){
+      for(int x = 1; x<=6; x++){
+        modbusTCPServer.coilWrite(x,0);
+        modbusTCPServer.holdingRegisterWrite(x,0);
+      }
+
+      modbusTCPServer.coilWrite(7,0); //pump
+      modbusTCPServer.coilWrite(8,0); //Mixer
+	}
 	
 	ModBusTCPService(); 
   updateArrays();
