@@ -29,6 +29,7 @@ void setup() {
   while (!P1.init()){} ; //Wait for P1 Modules to Sign on   
   Ethernet.begin(mac, ip);
   server.begin(); 
+  Serial.begin(9600);
 
   if (!modbusTCPServer.begin()) {while (1);} //Start the Modbus TCP server
 
@@ -49,13 +50,12 @@ void loop() {
 
   //Check for Clean Mode
   if(MB_C[10]){
-    reset(3);
     CleanMode();
   }
 
   // //Check for Production Mode
   if(MB_C[12]){
-
+    reset(3);
     ProductionMode();
   }
 
@@ -176,15 +176,14 @@ void ProductionMode(){
   updateArrays(); 
 
   //Prod Setup
-  float FlowRate;
   bool dispeningLock = false;
   bool jogLock = false;
   bool jogmode = false;
   unsigned long startTime = 0;
-  float TankRate = 28; //Added flowrate from tank - calculated in excel sheet
-  float ConstantRate = 1300 ; //contant from pump - calculated in excel sheet
+  int TankRate = 25; //Added flowrate from tank - calculated in excel sheet
+  int ConstantRate = 1560; ; //contant from pump - calculated in excel sheet
   float bottleSize;
-  float endTime;
+  float endTime = 0;
   int index = 0;
 
   //Set Bottles Enum to "Not Ready"
@@ -197,29 +196,15 @@ void ProductionMode(){
 
   modbusTCPServer.coilWrite(9, 1); //Set Pump to CW
   MB_C[9] = 1;
-
+  
   updatemodbusTCPServer(); //Updates modbus server values
   updateEquipmentStates();
-
-  if(MB_HR[13] == 1){
-    bottleSize = 120;
-  }
-  else if(MB_HR[13] == 2){
-    bottleSize = 250;
-  }
-  else if(MB_HR[13] == 3){
-    bottleSize == 625;
-  }
- 
-  float tankVolume = bottleSize * MB_HR[9]; //In MiliLiters
-
-  //tankVolume = 12000;
-  //bottleSize = 600;
 
   //Start
   while(MB_C[12]){
     ModBusTCPService();
     updateArrays();           
+   
     
     if(!MB_C[13]){//check if E-stop has been pressed
       reset();
@@ -279,25 +264,42 @@ void ProductionMode(){
       setSingleOutput(index, relayCard, 1, index+1); //Open next up Valve
       MB_HR[index]++; //Increment status to filling
 
+      if(MB_HR[13] == 1){
+        bottleSize = 110;
+      }
+      else if(MB_HR[13] == 2){
+        bottleSize = 240;
+      }
+      else if(MB_HR[13] == 3){
+        bottleSize = 600;
+      }
+    
+      int tankVolume = bottleSize * MB_HR[9]; //In MiliLiters
+
+      float flowrate = float(TankRate * float(tankVolume - float((MB_HR[10] * bottleSize)))/3785) + ConstantRate;
+      endTime = float(bottleSize / flowrate) * 60000;
+
+      Serial.print("bottleSize: ");
+      Serial.println(bottleSize);
+      Serial.print("TankRate: ");
+      Serial.println(TankRate);
+      Serial.print("Tank Volume: ");
+      Serial.println(tankVolume);
+      Serial.print("completed bottles: ");
+      Serial.println(MB_HR[10]);
+      Serial.print("constant Rate: ");
+      Serial.println(ConstantRate);
+      Serial.print("endTime: ");
+      Serial.println(endTime);
+      Serial.print("target bottles: ");
+      Serial.println(MB_HR[9]);
+      Serial.print("Flow Raste ");
+      Serial.println(flowrate);
+
       startTime = millis();
-      endTime = (bottleSize / ((TankRate * ((tankVolume - (MB_HR[10]* bottleSize)) / 3785)) + ConstantRate)) * 60000;
-
-      if(bottleSize == 250){
-        endTime = endTime + 2500;
-      }
-
-      if(bottleSize == 120){
-        endTime = endTime + 500;
-      }
-
-      if(bottleSize == 625){
-        endTime = endTime + 500;
-      }
-
-      MB_HR[15] = endTime;
     }
 
-    if((millis() - startTime) >= endTime && dispeningLock){
+    if(((millis() - startTime) > endTime) && dispeningLock){
       
       setSingleOutput(index, relayCard, 0, index+1); //Close next up Valve
 
@@ -366,7 +368,7 @@ void reset(int mode){//set all Modbus data back to default can skip some depedni
 		//modbusTCPServer.discreteInputWrite(x, 0);
 	  }
   }
-  else if(mode ==3){
+  else if(mode == 3){
       for(int x = 1; x<=6; x++){
         modbusTCPServer.coilWrite(x,0);
         modbusTCPServer.holdingRegisterWrite(x,0);
