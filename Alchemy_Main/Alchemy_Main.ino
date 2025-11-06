@@ -210,6 +210,8 @@ void ProductionMode(){
       break;
     }
 
+    for(int x = )
+
     //Jog Mode On
     if(MB_C[23]){
       setPumpSpeed(90);
@@ -281,7 +283,7 @@ void ProductionMode(){
 
       float flowrate = float(TankRate * float(tankVolume - float((MB_HR[10] * bottleSize)))/3785) + ConstantRate;
 
-      endTime = float(bottleSize / flowrate) * 60000 + offset[index];
+      endTime = float(bottleSize / flowrate) * 60000 + float(offset[index-1] * 250);
 
       startTime = millis();
     }
