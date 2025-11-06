@@ -210,7 +210,10 @@ void ProductionMode(){
       break;
     }
 
-    for(int x = )
+    //Bottle Station offset values
+    for(int x = 0; x<6; x++){
+      offset[x] = MB_HR[x+16]
+    }
 
     //Jog Mode On
     if(MB_C[23]){
